@@ -1,0 +1,643 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Carte photos (local, sans installation)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet"
+  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/water.css@2/out/water.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:wght@400;500&display=swap">
+<style>
+  html,body,#map { height: 100%; margin: 0; }
+
+  /* Widgets (contenu réutilisé dans le panneau latéral) */
+  .widgets { position:absolute; top:14px; left:14px; z-index:10000; display:none; flex-direction:column; gap:10px; width:min(440px, 90vw); font:14px/1.35 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+  .widget { background:rgba(255,255,255,.9); border:1px solid rgba(0,0,0,.06); border-radius:12px; box-shadow:0 6px 24px rgba(0,0,0,.18); overflow:hidden; }
+  .widget > summary { list-style:none; cursor:pointer; padding:10px 14px; font-weight:700; background:linear-gradient(180deg, #fff, #f8fafc); }
+  .widget[open] > summary { border-bottom:1px solid #e5e7eb; }
+  .widget .body { padding:10px 14px; }
+  .widget .body row { display:block; margin:10px 0; }
+  /* Reset Water.css content width to allow full-screen map */
+  body { max-width: none !important; }
+  .widget button:active { transform: translateY(1px); }
+  .stats { margin-top:6px; color:#444 }
+  .file-row { display:flex; align-items:center; gap:10px; margin-top:6px; }
+  #btnBrowse { padding:4px 10px; font-size:13px; border-radius:8px; border:1px solid #ccd1d7; background:#4b5563; color:#fff; box-shadow:0 1px 2px rgba(0,0,0,.08); }
+  #btnBrowse:hover { background:#374151; }
+  #fileStatus { font-size:13px; color:#4b5563; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:160px; }
+
+  /* Popups : photo seule, sans contour ni pointe */
+  .leaflet-popup-content-wrapper { background: transparent; box-shadow: none; border: 0; }
+  .leaflet-popup-content { margin: 0; }
+  .leaflet-popup-tip { display: none; }
+  .leaflet-popup-close-button { display: none; }
+  .photo-popup img { display:block; border-radius:10px; max-width:260px; height:auto; }
+
+  /* (ancien indicateur de zoom supprimé) */
+  
+  /* Bibliothèque supprimée */
+
+  /* Contrôle zoom façon Google Maps */
+  .gzoom { position:absolute; right:14px; bottom:14px; z-index:10000; background:#ffffff; border:1px solid #dadce0; border-radius:8px; box-shadow:0 2px 6px rgba(60,64,67,.3), 0 1px 2px rgba(60,64,67,.15); overflow:hidden; display:flex; flex-direction:column; }
+  .gzoom button { width:40px; height:40px; border:0; background:#ffffff; line-height:1; cursor:pointer; display:flex; align-items:center; justify-content:center; }
+  .gzoom button:hover { background:#f3f4f6; }
+  .gzoom .material-symbols-rounded { font-variation-settings: 'FILL' 0, 'wght' 500, 'opsz' 24; font-size:20px; color:#111827; }
+  .gzoom .sep { height:1px; background:#dadce0; }
+
+  /* Masquer le contrôle zoom natif Leaflet (sécurité) */
+  .leaflet-control-zoom { display:none !important; }
+
+  /* Barre d'icônes (à la uMap) */
+  .dock-left { position:absolute; top:14px; left:14px; z-index:10001; display:flex; flex-direction:column; gap:8px; }
+  .dock-left button { width:36px; height:36px; border-radius:8px; border:1px solid #e5e7eb; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.05); cursor:pointer; display:flex; align-items:center; justify-content:center; }
+  .dock-left button:hover { background:#f3f4f6; }
+  .dock-left .material-symbols-rounded { font-variation-settings: 'FILL' 0, 'wght' 500, 'opsz' 24; font-size:20px; color:#374151; line-height:1; }
+  .dock-left button.muted { opacity:.45; }
+
+  /* Dock navigation bas-gauche */
+  .dock-bl { position:absolute; left:14px; bottom:14px; z-index:10000; display:flex; align-items:center; gap:8px; }
+  .dock-bl .btn { width:40px; height:40px; border-radius:8px; border:1px solid #e5e7eb; background:#ffffff; box-shadow:0 1px 2px rgba(0,0,0,.05); display:flex; align-items:center; justify-content:center; cursor:pointer; }
+  .dock-bl .btn:hover{ background:#f3f4f6; }
+  .dock-bl .material-symbols-rounded { font-variation-settings: 'FILL' 0, 'wght' 500, 'opsz' 24; font-size:22px; color:#111827; }
+  .dock-bl .pos { font:12px/1.2 system-ui, sans-serif; color:#374151; background:#fff; border:1px solid #e5e7eb; padding:6px 8px; border-radius:8px; box-shadow:0 1px 2px rgba(0,0,0,.05); }
+
+  /* Debug overlay */
+  #dbg { position:absolute; left:14px; bottom:70px; z-index:10000; background:rgba(17,24,39,.85); color:#f9fafb; padding:6px 8px; border-radius:8px; font:12px/1.3 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; max-width:50vw; pointer-events:none; }
+
+  /* Panneau latéral */
+  .sidepanel { position:absolute; top:14px; left:88px; bottom:100px; width:300px; background:rgba(255,255,255,.96); border:1px solid #e5e7eb; border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,.18); z-index:10000; display:none; flex-direction:column; overflow:hidden; }
+  .sidepanel.open { display:flex; }
+  .sidepanel .head { display:flex; align-items:center; justify-content:space-between; padding:10px 14px; font-weight:700; background:linear-gradient(180deg, #ffffff, #f3f4f6); border-bottom:1px solid #e5e7eb; }
+  .sidepanel .body { padding:12px 14px; overflow:auto; }
+  .sidepanel .close { border:1px solid #d1d5db; background:#fff; border-radius:8px; width:30px; height:30px; display:flex; align-items:center; justify-content:center; cursor:pointer; box-shadow:0 1px 2px rgba(0,0,0,.08); }
+  .sidepanel .close:hover{ background:#f3f4f6; }
+  .sidepanel .close .material-symbols-rounded{ font-size:20px; color:#111827; }
+  .src-info { margin-top:10px; }
+  .src-info .chips { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px; }
+  .src-info .chips span{ background:#f3f4f6; border:1px solid #e5e7eb; border-radius:999px; padding:4px 8px; font-size:12px; }
+  .src-info .thumbs { display:flex; gap:6px; }
+  .src-info .thumbs img { width:54px; height:54px; object-fit:cover; border-radius:8px; border:1px solid #e5e7eb; }
+  .widget .body button { font-size:12px; padding:6px 10px; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div class="widgets" id="widgetSource" style="display:none">
+  <details class="widget" open>
+    <summary>Source</summary>
+    <div class="body">
+      <row>
+        <label id="rowLegacy">
+          <strong>Choisir un dossier de photos (JPEG)</strong>
+          <div class="file-row">
+            <input id="picker" type="file" webkitdirectory multiple style="display:none">
+            <button id="btnBrowse" type="button">Parcourir…</button>
+            <span id="fileStatus">Aucun dossier sélectionné.</span>
+          </div>
+        </label>
+      </row>
+      <row>
+        <div id="rowFsa"><button id="pickDirFS">Ouvrir un dossier</button>
+        <small id="fsaHint"></small>
+        </div>
+      </row>
+      <div class="src-info" id="srcInfo" style="display:none">
+        <div class="chips">
+          <span id="chipCount">0 fichiers</span>
+          <span id="chipGps">GPS: 0</span>
+        </div>
+        <div class="thumbs" id="thumbs"></div>
+      </div>
+    </div>
+  </details>
+
+  
+
+  <details class="widget">
+    <summary>Export</summary>
+    <div class="body" id="exportPanel" style="display:none">
+      <row>
+        <label>Préfixe URL des images (pour CSV uMap) :</label>
+        <input id="urlPrefix" type="text" placeholder="ex: https://mon-site/photos/">
+      </row>
+      <row>
+        <button id="exportCsv">Exporter CSV</button>
+        <button id="exportGeo">Exporter GeoJSON</button>
+      </row>
+    </div>
+  </details>
+
+  
+
+  <div class="stats" id="stats" style="margin: 10px 14px;"></div>
+</div>
+
+<!-- Dock d'icônes -->
+<div class="dock-left">
+  <button id="icoSource" title="Source"><span class="material-symbols-rounded">folder_open</span></button>
+  <button id="icoNav" title="Navigation (afficher/masquer les contrôles)" style="display:none"><span class="material-symbols-rounded">route</span></button>
+  <button id="icoExport" title="Export" style="display:none"><span class="material-symbols-rounded">upload</span></button>
+  
+</div>
+
+<!-- Panneau latéral -->
+<div class="sidepanel" id="sidepanel">
+  <div class="head">
+    <span id="sideTitle">Panel</span>
+    <button class="close" id="sideClose" title="Fermer"><span class="material-symbols-rounded">close</span></button>
+  </div>
+  <div class="body" id="sideBody"></div>
+  </div>
+
+<div class="gzoom" id="gzoom">
+  <button id="zoomIn" title="Zoom avant"><span class="material-symbols-rounded">add</span></button>
+  <div class="sep"></div>
+  <button id="zoomOut" title="Zoom arrière"><span class="material-symbols-rounded">remove</span></button>
+</div>
+
+<!-- Navigation dock (toujours visible) -->
+<div class="dock-bl" id="navDock" style="display:none">
+  <button class="btn" id="navPrev" title="Précédent"><span class="material-symbols-rounded">arrow_back</span></button>
+  <button class="btn" id="navNext" title="Suivant"><span class="material-symbols-rounded">arrow_forward</span></button>
+  <button class="btn" id="navPlay" title="Lecture/Pause"><span class="material-symbols-rounded">play_arrow</span></button>
+  <button class="btn" id="navFocus" title="Zoom fort sur la photo courante"><span class="material-symbols-rounded">center_focus_strong</span></button>
+  <button class="btn" id="navFS" title="Plein écran"><span class="material-symbols-rounded">fullscreen</span></button>
+  <span class="pos" id="posDock">0/0</span>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+  integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script src="https://unpkg.com/exifr@7.1.3/dist/full.umd.js"></script>
+<script>
+  // Paramètres (modifiables via UI + localStorage)
+  let BASE_Z = 16;     // niveau "dézoom"
+  let FOCUS_Z = 14;    // zoom de focus sur la photo
+  let FLY_MS = 300;    // durée du flyTo
+  let STEP_MS = 250;   // délai entre étapes (par défaut)
+  let ANIM_ENABLED = true; // état par défaut si case absente
+
+  // Carte
+  const map = L.map('map', { zoomControl: true }).setView([30.7,-9.1], 6);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+    maxZoom: 19, attribution: '&copy; OpenStreetMap'
+  }).addTo(map);
+
+  // Contrôle zoom façon Google Maps
+  (function initGZoom(){
+    const plus = document.getElementById('zoomIn');
+    const minus = document.getElementById('zoomOut');
+    plus.onclick = ()=> map.zoomIn();
+    minus.onclick = ()=> map.zoomOut();
+  })();
+
+  // Side panel: logique d'ouverture/fermeture + routing des contenus
+  (function initSidePanel(){
+    const side = document.getElementById('sidepanel');
+    const body = document.getElementById('sideBody');
+    const title = document.getElementById('sideTitle');
+    const closeBtn = document.getElementById('sideClose');
+
+    const widgetSource = document.querySelector('.widgets');
+    const tplSource = widgetSource.querySelectorAll('.widget')[0];
+    const tplExport = widgetSource.querySelectorAll('.widget')[1];
+    // plus de panneau paramètres
+
+    function openPanel(name, tpl){
+      title.textContent = name;
+      body.innerHTML = '';
+      const host = document.createElement('div');
+      // cloner le contenu du template et l'injecter
+      const clone = tpl.cloneNode(true);
+      // retirer le <summary> et n'afficher que la .body
+      const content = clone.querySelector('.body');
+      if (content) host.appendChild(content);
+      else host.appendChild(clone);
+      body.appendChild(host);
+      side.classList.add('open');
+      // recâbler quelques handlers dans le clone si besoin
+      rebindHandlers(host);
+    }
+
+    function saveParamsFromRoot(root){
+      const getNum = (sel, fallback)=>{
+        const el = root.querySelector(sel); const v = parseInt(el && el.value); return Number.isFinite(v) ? v : fallback;
+      };
+      BASE_Z = Math.max(1, Math.min(19, getNum('#p_basez', BASE_Z)));
+      FOCUS_Z = Math.max(1, Math.min(19, getNum('#p_focusz', FOCUS_Z)));
+      FLY_MS = Math.max(0, getNum('#p_fly', FLY_MS));
+      STEP_MS = Math.max(0, getNum('#p_step', STEP_MS));
+      const animEl = root.querySelector('#animFly');
+      const ANIM_ENABLED = animEl ? !!animEl.checked : true;
+      localStorage.setItem('params', JSON.stringify({ BASE_Z, FOCUS_Z, FLY_MS, STEP_MS, ANIM_ENABLED }));
+      // Miroir sur le template caché pour les prochaines ouvertures
+      const mirrorIds = ['p_basez','p_focusz','p_fly','p_step','animFly'];
+      mirrorIds.forEach(id=>{
+        const src = root.querySelector('#'+id); const dst = document.getElementById(id);
+        if (src && dst){ if ('checked' in src) dst.checked = src.checked; if ('value' in src) dst.value = src.value; }
+      });
+    }
+
+    function rebindHandlers(root){
+      // Rebrancher les boutons et inputs importants dans le clone
+      const pick = root.querySelector('#picker');
+      const btnBrowse = root.querySelector('#btnBrowse');
+      const status = root.querySelector('#fileStatus');
+      if (btnBrowse && pick){ btnBrowse.onclick = ()=> pick.click(); }
+      if (pick){
+        pick.addEventListener('change', async (e)=>{
+          const files = e.target && e.target.files;
+          if (files && files.length){
+            status && (status.textContent = `${files.length} fichiers sélectionnés.`);
+            await loadFiles(files);
+            const sp = document.getElementById('sidepanel'); if (sp) sp.classList.remove('open');
+          }
+        });
+      }
+      const prev = root.querySelector('#prev'); if (prev) prev.onclick = ()=>{ stop(); goTo(current-1); };
+      const next = root.querySelector('#next'); if (next) next.onclick = ()=>{ stop(); goTo(current+1); };
+      const play = root.querySelector('#play'); if (play) play.onclick = ()=>{
+        if (timer){ stop(); return; }
+        document.getElementById('play').click();
+      };
+      const save = root.querySelector('#saveParams'); if (save) save.onclick = ()=> document.getElementById('saveParams').click();
+      const pickFsa = root.querySelector('#pickDirFS'); if (pickFsa) pickFsa.onclick = ()=> document.getElementById('pickDirFS').click();
+      // inputs params (synchro et sauvegarde)
+      ['p_basez','p_focusz','p_fly','p_step','urlPrefix','animFly'].forEach(id=>{
+        const src = document.getElementById(id);
+        const dst = root.querySelector('#'+id);
+        if (src && dst){ if ('value' in dst) dst.value = src.value; if ('checked' in dst) dst.checked = src.checked; }
+        if (dst){ dst.addEventListener('input', ()=> saveParamsFromRoot(root)); dst.addEventListener('change', ()=> saveParamsFromRoot(root)); }
+      });
+      const saveBtn = root.querySelector('#saveParams'); if (saveBtn){ saveBtn.onclick = ()=> saveParamsFromRoot(root); }
+    }
+
+    function toggle(name, tpl){
+      if (!side.classList.contains('open')){ openPanel(name, tpl); return; }
+      if (title.textContent === name){ side.classList.remove('open'); body.innerHTML=''; return; }
+      openPanel(name, tpl);
+    }
+
+    document.getElementById('icoSource').onclick = ()=> toggle('Source', tplSource);
+    document.getElementById('icoExport').onclick = ()=> toggle('Export', tplExport);
+    // pas d'icône paramètres
+    document.getElementById('icoNav').onclick = ()=>{
+      const dock = document.querySelector('.dock-bl');
+      const btn = document.getElementById('icoNav');
+      if (!dock || !btn) return;
+      const nowHidden = dock.style.display !== 'none' ? true : false;
+      dock.style.display = nowHidden ? 'none' : 'flex';
+      btn.classList.toggle('muted', nowHidden);
+    };
+    closeBtn.onclick = ()=>{ side.classList.remove('open'); body.innerHTML=''; };
+  })();
+
+  // Etat
+  let items = [];       // {name, lat, lon, dateIso, urlBlob}
+  let markers = [];     // L.Marker
+  let current = -1;
+  let timer = null;
+  let isMoving = false; // évite les appels concurrents à flyTo
+  let pathLine = null;  // polyline reliant les points
+
+  // Utilitaires
+  const $ = (id)=>document.getElementById(id);
+  const esc = (s)=> String(s==null?'':s).replace(/[&<>"]/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const toIso = (d)=> d && !isNaN(d) ? new Date(d).toISOString() : '';
+  const csvRow = (arr)=> arr.map(v=>{
+    v = v==null ? '' : String(v);
+    return /[",\n]/.test(v) ? `"${v.replace(/"/g,'""')}"` : v;
+  }).join(',');
+  const distKm = (a,b)=>{
+    const toRad = x=> x*Math.PI/180;
+    const R = 6371;
+    const dLat = toRad(b.lat-a.lat);
+    const dLon = toRad(b.lon-a.lon);
+    const la1 = toRad(a.lat), la2 = toRad(b.lat);
+    const h = Math.sin(dLat/2)**2 + Math.cos(la1)*Math.cos(la2)*Math.sin(dLon/2)**2;
+    return 2*R*Math.asin(Math.sqrt(h));
+  };
+  function download(filename, text, mime='text/plain') {
+    const blob = new Blob([text], {type: mime});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = filename; a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
+  }
+
+  // ===== Persistance dossiers (File System Access + IndexedDB) =====
+  const FSA_SUPPORTED = ('showDirectoryPicker' in window) && (window.isSecureContext === true);
+  const DB_NAME = 'carte-photos-db';
+  // (Bibliothèque supprimée)
+
+  function openDb(){ return Promise.resolve(null); }
+
+  // UI hint/disable pour FSA
+  (function initFsaUi(){
+    const btn = document.getElementById('pickDirFS');
+    const hint = document.getElementById('fsaHint');
+    const rowLegacy = document.getElementById('rowLegacy');
+    const rowFsa = document.getElementById('rowFsa');
+    if (!btn || !hint || !rowLegacy || !rowFsa) return;
+    if (!FSA_SUPPORTED){
+      // Firefox / non-sécurisé: on garde uniquement l'input legacy
+      rowFsa.style.display = 'none';
+      rowLegacy.style.display = 'block';
+    } else {
+      // Chrome sécurisé: on n'affiche que FSA
+      rowLegacy.style.display = 'none';
+      rowFsa.style.display = 'block';
+      hint.textContent = '(persistant, nécessite autorisation)';
+    }
+  })();
+
+  async function dbGetAll(){ return []; }
+
+  async function dbPut(record){ return; }
+
+  async function dbDelete(id){ return; }
+
+  async function dbPutFiles(id, files){ return; }
+  async function dbGetFiles(id){ return null; }
+
+  function dirIdFromHandle(handle){ return ''; }
+  function dirIdFromLegacyName(name){ return ''; }
+
+  async function ensureUniqueAdd(handle){ return ''; }
+
+  async function ensureUniqueAddLegacy(name){ return ''; }
+
+  async function renderLibrary(){ /* supprimé */ }
+
+  async function readAllJpegsFromDir(dirHandle){
+    const files = [];
+    // @ts-ignore: for await support in browsers implementing FSA
+    for await (const [name, handle] of dirHandle.entries()){
+      try {
+        if (handle.kind === 'file' && /\.jpe?g$/i.test(name)){
+          const file = await handle.getFile();
+          files.push(file);
+        } else if (handle.kind === 'directory'){
+          const sub = await readAllJpegsFromDir(handle);
+          files.push(...sub);
+        }
+      } catch(_){}
+    }
+    return files;
+  }
+
+  async function autoOpenLastIfPossible(){ return; }
+
+  async function loadFiles(fileList){
+    items = []; markers.forEach(m=>map.removeLayer(m)); markers = []; if (pathLine){ map.removeLayer(pathLine); pathLine=null; } current = -1; stop();
+    $('stats').textContent = 'Lecture EXIF…';
+
+    let scanned=0, jpeg=0, withGps=0, noGps=0;
+    for (const f of fileList) {
+      scanned++;
+      if (!/\.jpe?g$/i.test(f.name)) continue;
+      jpeg++;
+      try {
+        const exif = await exifr.parse(f, { gps:true, exif:true });
+        const { latitude, longitude, DateTimeOriginal } = exif || {};
+        // Filtrage strict des coordonnées invalides (NaN, hors bornes, 0/0)
+        if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) { noGps++; continue; }
+        if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) { noGps++; continue; }
+        if (Math.abs(latitude) < 1e-6 && Math.abs(longitude) < 1e-6) { noGps++; continue; }
+        withGps++;
+        const url = URL.createObjectURL(f);
+        items.push({
+          name: f.name,
+          lat: latitude,
+          lon: longitude,
+          dateIso: toIso(DateTimeOriginal) || toIso(f.lastModified),
+          urlBlob: url
+        });
+      } catch(_) { /* ignore */ }
+    }
+
+    // Tri strict par date (EXIF si dispo, sinon lastModified)
+    items.sort((a,b)=> new Date(a.dateIso||0).getTime() - new Date(b.dateIso||0).getTime());
+
+    // Ajout sur carte
+    const coords=[];
+    for (let idx=0; idx<items.length; idx++){
+      const it = items[idx];
+      const m = L.circleMarker([it.lat, it.lon], { radius:4, color:'#0b5ed7', weight:1, fillColor:'#fff', fillOpacity:1 }).addTo(map);
+      // popup = image seule (désactive l'auto-pan pour éviter les micro-sauts)
+      m.bindPopup(`<div class="photo-popup"><img src="${it.urlBlob}" alt="${esc(it.name)}"></div>`, { closeButton:false, autoPan:false });
+      // clic sur point => aller à cette photo et reprendre la lecture à partir d'ici
+      m.on('click', ()=>{ stop(); goTo(idx, true); });
+      markers.push(m);
+      coords.push([it.lat, it.lon]);
+    }
+    if (coords.length) {
+      const dock = document.getElementById('navDock'); if (dock) dock.style.display='flex';
+      const ex = document.getElementById('exportPanel'); if (ex) ex.style.display='block';
+      if (coords.length>=2){ pathLine = L.polyline(coords, { color:'#0b5ed7', weight:2, opacity:0.8, lineCap:'butt', lineJoin:'round' }).addTo(map); }
+      map.fitBounds(L.latLngBounds(coords).pad(0.15));
+      goTo(0, false);
+      const el=document.getElementById('posDock'); if(el) el.textContent = `${current+1}/${markers.length}`;
+      // Auto-fermeture du panneau Source après chargement
+      const side = document.getElementById('sidepanel');
+      if (side) side.classList.remove('open');
+      // afficher autres boutons
+      const icNav = document.getElementById('icoNav'); if (icNav) icNav.style.display='flex';
+      const icExp = document.getElementById('icoExport'); if (icExp) icExp.style.display='flex';
+    }
+    $('stats').textContent =
+      `Fichiers: ${scanned}  JPEG: ${jpeg}  Avec GPS: ${withGps}  Sans GPS: ${noGps}`;
+    // Feedback visuel dans le panneau Source
+    const srcInfo = document.getElementById('srcInfo');
+    const chipCount = document.getElementById('chipCount');
+    const chipGps = document.getElementById('chipGps');
+    const thumbs = document.getElementById('thumbs');
+    if (srcInfo && chipCount && chipGps && thumbs){
+      srcInfo.style.display = 'block';
+      chipCount.textContent = `${jpeg} fichiers`;
+      chipGps.textContent = `GPS: ${withGps}`;
+      thumbs.innerHTML = '';
+      for (let i=0;i<Math.min(3, items.length); i++){
+        const img = document.createElement('img');
+        img.src = items[i].urlBlob;
+        img.alt = items[i].name;
+        thumbs.appendChild(img);
+      }
+    }
+  }
+
+  // Animation 4 -> 6 -> 4
+  function goTo(i, animate=true){
+    if (!markers.length) return;
+    current = (i + markers.length) % markers.length;
+    const it = items[current];
+    const posEl = document.getElementById('pos');
+    if (posEl) posEl.textContent = `${current+1}/${markers.length}`;
+    const dockPos = document.getElementById('posDock');
+    if (dockPos) dockPos.textContent = `${current+1}/${markers.length}`;
+
+    // Respecte le toggle d'animation (case à cocher animFly)
+    const animCheckbox = document.getElementById('animFly');
+    const animEnabled = animCheckbox ? !!animCheckbox.checked : ANIM_ENABLED;
+
+    const currentZoom = map.getZoom();
+    const center = map.getCenter && map.getCenter();
+    const samePos = center ? (Math.abs(center.lat - it.lat) < 1e-7 && Math.abs(center.lng - it.lon) < 1e-7) : false;
+
+    // Si la position est identique, n'anime pas: ouvrir simplement la popup
+    if (samePos) {
+      markers[current]?.openPopup();
+      return;
+    }
+
+    if (!animate || !animEnabled || isMoving) {
+      map.setView([it.lat, it.lon], currentZoom, { animate:false });
+      markers[current].openPopup();
+      return;
+    }
+
+    // FlyTo simple en conservant le zoom courant
+    const prev = markers[current];
+    if (prev) prev.closePopup();
+    isMoving = true;
+    map.flyTo([it.lat, it.lon], currentZoom, { animate:true, duration: Math.max(0.01, FLY_MS/1000), easeLinearity: 1.0, noMoveStart: true });
+    map.once('moveend', ()=> { isMoving = false; markers[current]?.openPopup(); });
+  }
+
+  function stop(){ if (timer){ clearInterval(timer); timer=null; } }
+
+  // UI
+  $('picker').addEventListener('change', async (e)=>{
+    const files = e.target.files;
+    await loadFiles(files);
+    // bibliothèque supprimée
+  });
+  // Bouton fermer du panneau source (après chargement)
+  document.addEventListener('click', (e)=>{
+    const btn = e.target && e.target.id==='btnCloseAfterLoad' ? e.target : null;
+    if (!btn) return;
+    const side = document.getElementById('sidepanel');
+    const info = document.getElementById('srcInfo');
+    if (side) side.classList.remove('open');
+    if (info) info.style.display='none';
+  });
+  const updateDockPos = ()=>{ const el=document.getElementById('posDock'); if(el) el.textContent = markers.length? `${current+1}/${markers.length}`:'0/0'; };
+  function prevOne(){ stop(); goTo(current-1); updateDockPos(); }
+  function nextOne(){ stop(); goTo(current+1); updateDockPos(); }
+  function togglePlay(){
+    const playBtn = document.getElementById('navPlay');
+    if (timer){
+      stop();
+      if (playBtn) playBtn.innerHTML = '<span class="material-symbols-rounded">play_arrow</span>';
+      return;
+    }
+    if (playBtn) playBtn.innerHTML = '<span class="material-symbols-rounded">pause</span>';
+    timer = setInterval(()=>{ goTo(current+1); updateDockPos(); }, 1800);
+  }
+  const navPrev = document.getElementById('navPrev'); if (navPrev) navPrev.onclick = prevOne;
+  const navNext = document.getElementById('navNext'); if (navNext) navNext.onclick = nextOne;
+  const navPlay = document.getElementById('navPlay'); if (navPlay) navPlay.onclick = togglePlay;
+  const navFocus = document.getElementById('navFocus'); if (navFocus) navFocus.onclick = ()=>{
+    if (!markers.length) return;
+    const it = items[current<0?0:current];
+    const z = Math.min(19, (map.getZoom? map.getZoom(): 6) + 4);
+    map.setView([it.lat, it.lon], z, { animate:true });
+    markers[current]?.openPopup();
+  };
+  const navFS = document.getElementById('navFS'); if (navFS) navFS.onclick = ()=>{
+    const el = document.documentElement;
+    const isFS = document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement;
+    if (!isFS){
+      (el.requestFullscreen||el.webkitRequestFullscreen||el.msRequestFullscreen)?.call(el);
+    } else {
+      (document.exitFullscreen||document.webkitExitFullscreen||document.msExitFullscreen)?.call(document);
+    }
+  };
+  window.addEventListener('keydown', (e)=>{
+    if (e.key==='ArrowRight'){ stop(); goTo(current+1); }
+    if (e.key==='ArrowLeft'){  stop(); goTo(current-1); }
+  });
+
+  // Exports
+  $('exportCsv').onclick = ()=>{
+    if (!items.length) return;
+    const prefix = $('urlPrefix').value.trim();
+    const rows = [['latitude','longitude','name','description']];
+    for (const it of items) {
+      const url = prefix ? (prefix + encodeURIComponent(it.name)) : '';
+      const html = url ? `<img src="${url}" width="260" referrerpolicy="no-referrer">` : '';
+      rows.push([it.lat, it.lon, it.name, html]);
+    }
+    download('photos_umap_inline.csv', rows.map(csvRow).join('\n'), 'text/csv');
+  };
+  
+  // FSA: ouvrir un dossier
+  $('pickDirFS').onclick = async ()=>{
+    try {
+      if (!FSA_SUPPORTED){ $('picker').click(); return; }
+      const dirHandle = await window.showDirectoryPicker();
+      const perm = await dirHandle.requestPermission({ mode:'read' });
+      if (perm !== 'granted') return;
+      const files = await readAllJpegsFromDir(dirHandle);
+      await loadFiles(files);
+    } catch(err){ /* annulé */ }
+  };
+
+  // Bibliothèque supprimée
+  
+  // Paramètres: chargement/sauvegarde
+  (function initParams(){
+    const saved = JSON.parse(localStorage.getItem('params')||'{}');
+    if (Number.isFinite(saved.BASE_Z)) BASE_Z = saved.BASE_Z;
+    if (Number.isFinite(saved.FOCUS_Z)) FOCUS_Z = saved.FOCUS_Z;
+    if (Number.isFinite(saved.FLY_MS)) FLY_MS = saved.FLY_MS;
+    if (Number.isFinite(saved.STEP_MS)) STEP_MS = saved.STEP_MS;
+    if (typeof saved.ANIM_ENABLED === 'boolean') ANIM_ENABLED = saved.ANIM_ENABLED;
+    const anim = document.getElementById('animFly'); if (anim) anim.checked = ANIM_ENABLED;
+    const b = $('p_basez'), f = $('p_focusz'), fly=$('p_fly'), st=$('p_step');
+    if (b) b.value = BASE_Z;
+    if (f) f.value = FOCUS_Z;
+    if (fly) fly.value = FLY_MS;
+    if (st) st.value = STEP_MS;
+    const save = ()=>{
+      BASE_Z = Math.max(1, Math.min(19, parseInt(($('p_basez')?.value)||BASE_Z)));
+      FOCUS_Z = Math.max(1, Math.min(19, parseInt(($('p_focusz')?.value)||FOCUS_Z)));
+      FLY_MS = Math.max(0, parseInt(($('p_fly')?.value)||FLY_MS));
+      STEP_MS = Math.max(0, parseInt(($('p_step')?.value)||STEP_MS));
+      const anim = document.getElementById('animFly');
+      ANIM_ENABLED = anim ? !!anim.checked : ANIM_ENABLED;
+      localStorage.setItem('params', JSON.stringify({ BASE_Z, FOCUS_Z, FLY_MS, STEP_MS, ANIM_ENABLED }));
+    };
+    const saveBtn = $('saveParams'); if (saveBtn) saveBtn.onclick = save;
+    ['p_basez','p_focusz','p_fly','p_step','animFly'].forEach(id=>{
+      const el = document.getElementById(id); if (!el) return;
+      el.addEventListener('change', save);
+      el.addEventListener('input', save);
+    });
+  })();
+  $('exportGeo').onclick = ()=>{
+    if (!items.length) return;
+    const features = items.map(it=>({
+      type:'Feature',
+      properties:{
+        name: it.name,
+        description: `<img src="${it.urlBlob}" width="260">`,
+        date: it.dateIso
+      },
+      geometry:{ type:'Point', coordinates:[it.lon, it.lat] }
+    }));
+    if (features.length>=2){
+      const line = {
+        type:'Feature',
+        properties:{ name:'Parcours', count:features.length },
+        geometry:{ type:'LineString', coordinates: features.map(f=>f.geometry.coordinates) }
+      };
+      features.unshift(line);
+    }
+    const geo = { type:'FeatureCollection', features };
+    download('umap_inline.geojson', JSON.stringify(geo, null, 2), 'application/json');
+  };
+</script>
+</body>
+</html>
