@@ -28,10 +28,23 @@
   #btnBrowse:hover { background:#374151; }
   #fileStatus { font-size:13px; color:#4b5563; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:160px; }
 
-  /* Popups : photo seule, sans contour ni pointe */
+  /* Popups : photo seule, avec flèche vers le marqueur */
   .leaflet-popup-content-wrapper { background: transparent; box-shadow: none; border: 0; }
   .leaflet-popup-content { margin: 0; }
-  .leaflet-popup-tip { display: none; }
+  .leaflet-popup-tip { display:block; background:#fff; box-shadow:0 2px 8px rgba(0,0,0,.18); width:20px; height:20px; }
+
+  /* Grilles d'aperçus (fonds et marqueurs) */
+  .preview-grid { display:flex; flex-wrap:wrap; gap:8px; }
+  .preview-item { width:92px; height:64px; border:1px solid #e5e7eb; border-radius:8px; background-size:cover; background-position:center; cursor:pointer; position:relative; overflow:hidden; }
+  .preview-item.selected { outline:2px solid #0b5ed7; outline-offset:1px; }
+  .preview-item .label { position:absolute; left:6px; bottom:6px; background:rgba(255,255,255,.92); border:1px solid #e5e7eb; border-radius:6px; padding:2px 6px; font-size:11px; }
+  .preview-item.marker { width:48px; height:48px; display:flex; align-items:center; justify-content:center; }
+  .marker-dot { border-radius:999px; border:2px solid #fff; box-shadow:0 1px 2px rgba(0,0,0,.2); }
+  /* Marqueurs HTML (divIcon) */
+  .mk { width: var(--s,16px); height: var(--s,16px); background:#fff; border:2px solid var(--c,#0b5ed7); box-shadow:0 1px 2px rgba(0,0,0,.2); border-radius:999px; }
+  .mk-square { border-radius:5px; }
+  .mk-diamond { border-radius:4px; transform: rotate(45deg); }
+  .mk-act { border-width:3px; }
   .leaflet-popup-close-button { display: none; }
   .photo-popup img { display:block; border-radius:10px; max-width:260px; height:auto; }
 
@@ -140,6 +153,7 @@
   <button id="icoSource" title="Source"><span class="material-symbols-rounded">folder_open</span></button>
   <button id="icoNav" title="Navigation (afficher/masquer les contrôles)" style="display:none"><span class="material-symbols-rounded">route</span></button>
   <button id="icoExport" title="Export" style="display:none"><span class="material-symbols-rounded">upload</span></button>
+  <button id="icoView" title="Affichage" style="display:none"><span class="material-symbols-rounded">tune</span></button>
   
 </div>
 
@@ -178,12 +192,55 @@
   let FLY_MS = 300;    // durée du flyTo
   let STEP_MS = 250;   // délai entre étapes (par défaut)
   let ANIM_ENABLED = true; // état par défaut si case absente
+  let MARKER_RADIUS = 4;   // taille par défaut des marqueurs
+  let MARKER_COLOR = '#0b5ed7'; // couleur par défaut des marqueurs
+  let MARKER_SHAPE = 'dot'; // dot|square|diamond
 
   // Carte
   const map = L.map('map', { zoomControl: true }).setView([30.7,-9.1], 6);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+  // Fonds de carte
+  const baseOSM = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
     maxZoom: 19, attribution: '&copy; OpenStreetMap'
-  }).addTo(map);
+  });
+  const baseOSMHot = L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png',{ maxZoom: 20, attribution: '&copy; OpenStreetMap HOT' });
+  const baseTopo = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',{
+    maxZoom: 17,
+    attribution: 'Données de la carte: &copy; OpenStreetMap, SRTM | Style: &copy; OpenTopoMap (CC-BY-SA)'
+  });
+  const baseSat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{
+    maxZoom: 19, attribution: 'Tiles &copy; Esri — Source: Esri, Airbus DS, USGS, NGA, NASA, etc.'
+  });
+  const baseEsriTopo = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',{ maxZoom: 19, attribution: 'Tiles &copy; Esri — World Topo Map' });
+  const baseEsriStreets = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',{ maxZoom: 19, attribution: 'Tiles &copy; Esri — World Street Map' });
+  const baseCartoLight = L.tileLayer('https://cartodb-basemaps-a.global.ssl.fastly.net/light_all/{z}/{x}/{y}.png',{ maxZoom: 19, attribution: '&copy; CartoDB' });
+  const baseCartoDark = L.tileLayer('https://cartodb-basemaps-a.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png',{ maxZoom: 19, attribution: '&copy; CartoDB' });
+  baseOSM.addTo(map);
+  let currentBaseLayer = baseOSM;
+  let currentBaseName = 'osm';
+  function setBaseLayer(name){
+    const mapByName = { osm: baseOSM, hot: baseOSMHot, topo: baseTopo, sat: baseSat, esritopo: baseEsriTopo, esristreets: baseEsriStreets, cartolight: baseCartoLight, cartodark: baseCartoDark };
+    const target = mapByName[name] || baseOSM;
+    if (currentBaseLayer !== target){
+      if (currentBaseLayer) map.removeLayer(currentBaseLayer);
+      target.addTo(map);
+      currentBaseLayer = target;
+      currentBaseName = name;
+    }
+  }
+
+  // Fabrique d'icône HTML pour les marqueurs
+  function makeIcon(isActive=false){
+    const size = Math.max(6, MARKER_RADIUS*2 + (isActive?2:0));
+    const html = `<div class="mk mk-${MARKER_SHAPE}${isActive?' mk-act':''}" style="--c:${MARKER_COLOR}; --s:${size}px"></div>`;
+    return L.divIcon({ className:'', html, iconSize:[size, size], iconAnchor:[size/2, size/2] });
+  }
+  function applyMarkerStyleToAll(){
+    for (let idx=0; idx<markers.length; idx++){
+      const isActive = idx === current;
+      markers[idx].setIcon(makeIcon(isActive));
+      markers[idx].setZIndexOffset(isActive ? 1000 : 0);
+    }
+  }
 
   // Contrôle zoom façon Google Maps
   (function initGZoom(){
@@ -203,6 +260,26 @@
     const widgetSource = document.querySelector('.widgets');
     const tplSource = widgetSource.querySelectorAll('.widget')[0];
     const tplExport = widgetSource.querySelectorAll('.widget')[1];
+    // création à la volée d'un widget Affichage (fonds + marqueur)
+    const tplView = document.createElement('details');
+    tplView.className = 'widget';
+    tplView.innerHTML = `
+      <summary>Affichage</summary>
+      <div class="body">
+        <row>
+          <label style="display:block; margin-bottom:6px">Fond de carte :</label>
+          <div id="basePreviews" class="preview-grid"></div>
+        </row>
+        <row>
+          <label style="display:block; margin:6px 0">Couleur du marqueur :</label>
+          <input id="markerColorPicker" type="color" value="#0b5ed7" style="width:48px; height:32px; padding:0; border:1px solid #e5e7eb; border-radius:6px;">
+        </row>
+        <row>
+          <label style="display:block; margin:6px 0">Forme du marqueur :</label>
+          <div id="shapePreviews" class="preview-grid"></div>
+        </row>
+      </div>`;
+    widgetSource.appendChild(tplView);
     // plus de panneau paramètres
 
     function openPanel(name, tpl){
@@ -272,6 +349,68 @@
         if (dst){ dst.addEventListener('input', ()=> saveParamsFromRoot(root)); dst.addEventListener('change', ()=> saveParamsFromRoot(root)); }
       });
       const saveBtn = root.querySelector('#saveParams'); if (saveBtn){ saveBtn.onclick = ()=> saveParamsFromRoot(root); }
+      // --- Affichage: aperçus fonds & marqueurs ---
+      const baseHost = root.querySelector('#basePreviews');
+      if (baseHost && !baseHost.dataset.init){
+        baseHost.dataset.init = '1';
+        const bases = [
+          { id:'osm', label:'OSM', img:'https://a.tile.openstreetmap.org/6/32/32.png' },
+          { id:'hot', label:'HOT', img:'https://tile.openstreetmap.fr/hot/6/32/32.png' },
+          { id:'topo', label:'Topo', img:'https://a.tile.opentopomap.org/6/32/32.png' },
+          { id:'sat', label:'Sat', img:'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/6/32/32' },
+          { id:'esritopo', label:'Esri Topo', img:'https://services.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/6/32/32' },
+          { id:'esristreets', label:'Esri Streets', img:'https://services.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/6/32/32' },
+          { id:'cartolight', label:'Carto Light', img:'https://cartodb-basemaps-a.global.ssl.fastly.net/light_all/6/32/32.png' },
+          { id:'cartodark', label:'Carto Dark', img:'https://cartodb-basemaps-a.global.ssl.fastly.net/dark_all/6/32/32.png' }
+        ];
+        bases.forEach(b=>{
+          const div = document.createElement('div');
+          div.className = 'preview-item';
+          div.style.backgroundImage = `url("${b.img}")`;
+          if (b.id===currentBaseName) div.classList.add('selected');
+          const lab = document.createElement('div'); lab.className='label'; lab.textContent=b.label; div.appendChild(lab);
+          div.onclick = ()=>{
+            baseHost.querySelectorAll('.preview-item').forEach(x=>x.classList.remove('selected'));
+            div.classList.add('selected');
+            setBaseLayer(b.id);
+          };
+          baseHost.appendChild(div);
+        });
+      }
+      // Color picker (unique couleur)
+      const colorPicker = root.querySelector('#markerColorPicker');
+      if (colorPicker){
+        colorPicker.value = MARKER_COLOR;
+        colorPicker.addEventListener('input', ()=>{ MARKER_COLOR = colorPicker.value; applyMarkerStyleToAll(); });
+      }
+      // Formes: rond, carré, losange (aperçus)
+      const shapeHost = root.querySelector('#shapePreviews');
+      if (shapeHost && !shapeHost.dataset.init){
+        shapeHost.dataset.init = '1';
+        const shapes = [
+          { id:'dot', label:'Rond' },
+          { id:'square', label:'Carré' },
+          { id:'diamond', label:'Losange' }
+        ];
+        shapes.forEach(s=>{
+          const div = document.createElement('div');
+          div.className = 'preview-item marker';
+          const el = document.createElement('div');
+          el.className = 'mk mk-'+s.id;
+          el.style.setProperty('--c', MARKER_COLOR);
+          el.style.setProperty('--s', (MARKER_RADIUS*2)+'px');
+          div.appendChild(el);
+          const lab = document.createElement('div'); lab.className='label'; lab.textContent=s.label; div.appendChild(lab);
+          if (s.id===MARKER_SHAPE) div.classList.add('selected');
+          div.onclick = ()=>{
+            shapeHost.querySelectorAll('.preview-item').forEach(x=>x.classList.remove('selected'));
+            div.classList.add('selected');
+            MARKER_SHAPE = s.id;
+            applyMarkerStyleToAll();
+          };
+          shapeHost.appendChild(div);
+        });
+      }
     }
 
     function toggle(name, tpl){
@@ -282,6 +421,7 @@
 
     document.getElementById('icoSource').onclick = ()=> toggle('Source', tplSource);
     document.getElementById('icoExport').onclick = ()=> toggle('Export', tplExport);
+    document.getElementById('icoView').onclick = ()=> toggle('Affichage', tplView);
     // pas d'icône paramètres
     document.getElementById('icoNav').onclick = ()=>{
       const dock = document.querySelector('.dock-bl');
@@ -424,9 +564,14 @@
     const coords=[];
     for (let idx=0; idx<items.length; idx++){
       const it = items[idx];
-      const m = L.circleMarker([it.lat, it.lon], { radius:4, color:'#0b5ed7', weight:1, fillColor:'#fff', fillOpacity:1 }).addTo(map);
-      // popup = image seule (désactive l'auto-pan pour éviter les micro-sauts)
-      m.bindPopup(`<div class="photo-popup"><img src="${it.urlBlob}" alt="${esc(it.name)}"></div>`, { closeButton:false, autoPan:false });
+      const m = L.marker([it.lat, it.lon], { icon: makeIcon(false) }).addTo(map);
+      // popup = image seule (désactive l'auto-pan) avec décalage pour ne pas recouvrir le marqueur
+      m.bindPopup(`<div class="photo-popup"><img src="${it.urlBlob}" alt="${esc(it.name)}"></div>`, {
+        closeButton:false,
+        autoPan:false,
+        offset: L.point(0, -16),
+        keepInView: false
+      });
       // clic sur point => aller à cette photo et reprendre la lecture à partir d'ici
       m.on('click', ()=>{ stop(); goTo(idx, true); });
       markers.push(m);
@@ -445,6 +590,7 @@
       // afficher autres boutons
       const icNav = document.getElementById('icoNav'); if (icNav) icNav.style.display='flex';
       const icExp = document.getElementById('icoExport'); if (icExp) icExp.style.display='flex';
+      const icView = document.getElementById('icoView'); if (icView) icView.style.display='flex';
     }
     $('stats').textContent =
       `Fichiers: ${scanned}  JPEG: ${jpeg}  Avec GPS: ${withGps}  Sans GPS: ${noGps}`;
@@ -471,7 +617,18 @@
   function goTo(i, animate=true){
     if (!markers.length) return;
     current = (i + markers.length) % markers.length;
+    // mettre en évidence le marqueur courant, et réinitialiser l'ancien
+    if (typeof goTo._lastIdx === 'number' && markers[goTo._lastIdx]){
+      markers[goTo._lastIdx].setIcon(makeIcon(false));
+      markers[goTo._lastIdx].setZIndexOffset(0);
+    }
     const it = items[current];
+    // style accentué pour le marqueur actif
+    if (markers[current]){
+      markers[current].setIcon(makeIcon(true));
+      markers[current].setZIndexOffset(1000);
+    }
+    goTo._lastIdx = current;
     const posEl = document.getElementById('pos');
     if (posEl) posEl.textContent = `${current+1}/${markers.length}`;
     const dockPos = document.getElementById('posDock');
